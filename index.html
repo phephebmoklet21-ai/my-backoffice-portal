@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="id" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Backoffice Portal</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Font Inter & FontAwesome Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="h-full bg-slate-50 text-slate-800 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-200">
+
+    <div id="app" class="h-full flex flex-col">
+        <!-- Dynamic content rendered by JS -->
+    </div>
+
+    <script>
+        // --- State Management ---
+        const STORAGE_KEY_USERS = 'backoffice_users_v1';
+        const STORAGE_KEY_SESSION = 'backoffice_session_v1';
+        const STORAGE_KEY_LOGS = 'backoffice_prod_logs_v1';
+
+        // Default initial users if empty
+        const defaultUsers = [
+            { id: '1', username: 'admin', password: 'password123', telegramId: '@admin_backoffice', role: 'Super Admin', status: 'Active', createdAt: '2026-03-01' },
+            { id: '2', username: 'budi_support', password: 'password123', telegramId: '@buditech', role: 'Support Agent', status: 'Active', createdAt: '2026-03-10' },
+            { id: '3', username: 'siti_ops', password: 'password123', telegramId: '@siti_ops', role: 'Operations', status: 'Inactive', createdAt: '2026-03-15' }
+        ];
+
+        // Default productivity simulation logs
+        const defaultLogs = [
+            { id: 101, user: '@buditech', action: 'Resolved Ticket #4029', score: 95, time: '10 mins ago' },
+            { id: 102, user: '@admin_backoffice', action: 'Approved System Release v2.4', score: 100, time: '25 mins ago' },
+            { id: 103, user: '@buditech', action: 'Updated Server Cluster Config', score: 90, time: '1 hour ago' }
+        ];
+
+        let state = {
+            view: 'login', // login, register, forgot, dashboard
+            dashboardTab: 'overview', // overview, users, productivity, settings
+            darkMode: false,
+            notification: null,
+            currentUser: null,
+            users: [],
+            productivityLogs: [],
+            // Modal states
+            showUserModal: false,
+            modalMode: 'add', // add or edit
+            selectedUser: null
+        };
+
+        // Initialize Local Storage data
+        function initStorage() {
+            if (!localStorage.getItem(STORAGE_KEY_USERS)) {
+                localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(defaultUsers));
+            }
+            if (!localStorage.getItem(STORAGE_KEY_LOGS)) {
+                localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(defaultLogs));
+            }
+            state.users = JSON.parse(localStorage.getItem(STORAGE_KEY_USERS));
+            state.productivityLogs = JSON.parse(localStorage.getItem(STORAGE_KEY_LOGS));
+            
+            const activeSession = localStorage.getItem(STORAGE_KEY_SESSION);
+            if (activeSession) {
+                try {
+                    state.currentUser = JSON.parse(activeSession);
+                    state.view = 'dashboard';
+                } catch(e) {
+                    localStorage.removeItem(STORAGE_KEY_SESSION);
+                }
+            }
+        }
+
+        function saveUsers() {
+            localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(state.users));
+        }
+
+        function saveLogs() {
+            localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(state.productivityLogs));
+        }
+
+        // --- Notification Helper ---
+        function showNotification(message, type = 'success') {
+            state.notification = { message, type };
+            render();
+            setTimeout(() => {
+                if (state.notification && state.notification.message === message) {
+                    state.notification = null;
+                    render();
+                }
+            }, 3500);
+        }
+
+        // --- Streamlined Component Renderers ---
+        function render() {
+            const app = document.getElementById('app');
+            let html = '';
+
+            // Render notification toast if active
+            const toastHtml = state.notification ? `
+                <div class="fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg border flex items-center space-x-3 fade-in ${
+                    state.notification.type === 'error' 
+                    ? 'bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-950/80 dark:border-rose-800 dark:text-rose-200' 
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/80 dark:border-emerald-800 dark:text-emerald-200'
+                }">
+                    <i class="fa-solid ${state.notification.type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'} text-lg"></i>
+                    <span class="text-sm font-medium">${state.notification.message}</span>
+                </div>
+            ` : '';
+
+            if (state.view === 'login') {
+                html = renderLoginView();
+            } else if (state.view === 'register') {
+                html = renderRegisterView();
+            } else if (state.view === 'forgot') {
+                html = renderForgotView();
+            } else if (state.view === 'dashboard') {
+                html = renderDashboardView();
+            }
+
+            app.innerHTML = toastHtml + html;
+            attachEventListeners();
+        }
+
+        // --- STREAMING_CHUNK:Rendering Authentication Views ---
+        function renderLoginView() {
+            return `
+                <div class="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-gradient-to-br from-slate-100 to-indigo-50 dark:from-slate-950 dark:to-slate-900">
+                    <div class="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200/80 dark:border-slate-700 p-8 fade-in">
+                        <div class="text-center mb-8">
+                            <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 mb-4 text-2xl font-bold">
+                                <i class="fa-solid fa-shield-halved"></i>
+                            </div>
+                            <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Backoffice Portal</h1>
+                            <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Silakan masuk untuk mengakses sistem operasional</p>
+                        </div>
+
+                        <form id="loginForm" class="space-y-5">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1.5">Username</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
+                                        <i class="fa-regular fa-user"></i>
+                                    </span>
+                                    <input type="text" id="loginUsername" required placeholder="Masukkan username" 
+                                        class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1.5">Password</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
+                                        <i class="fa-solid fa-lock"></i>
+                                    </span>
+                                    <input type="password" id="loginPassword" required placeholder="••••••••" 
+                                        class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400">
+                                </div>
+                            </div>
+
+                            <div class="flex items-center justify-between text-sm">
+                                <label class="flex items-center">
+                                    <input type="checkbox" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-900">
+                                    <span class="ml-2 text-slate-600 dark:text-slate-400">Ingat saya</span>
+                                </label>
+                                <button type="button" data-action="goto-forgot" class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">Lupa password?</button>
+                            </div>
+
+                            <button type="submit" class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl shadow-lg shadow-indigo-600/20 transition-all text-sm">
+                                Masuk ke Portal
+                            </button>
+                        </form>
+
+                        <div class="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                            Belum punya akun? <button type="button" data-action="goto-register" class="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">Daftar sekarang</button>
+                        </div>
+                        
+                        <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700 text-xs text-center text-slate-400">
+                            Demo Credential: Username: <code class="bg-slate-100 dark:bg-slate-900 px-1 py-0.5 rounded text-indigo-500">admin</code> | Pass: <code class="bg-slate-100 dark:bg-slate-900 px-1 py-0.5 rounded text-indigo-500">password123</code>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- STREAMING_CHUNK:Rendering Registration and Forgot Password Views ---
+        function renderRegisterView() {
+            return `
+                <div class="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-gradient-to-br from-slate-100 to-indigo-50 dark:from-slate-950 dark:to-slate-900">
+                    <div class="w-full max-w-lg bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200/80 dark:border-slate-700 p-8 fade-in">
+                        <div class="text-center mb-6">
+                            <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 mb-3 text-xl font-bold">
+                                <i class="fa-solid fa-user-plus"></i>
+                            </div>
+                            <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Registrasi Akun Baru</h1>
+                            <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Daftarkan akun backoffice dan sinkronkan Telegram ID Anda</p>
+                        </div>
+
+                        <form id="registerForm" class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Username</label>
+                                <input type="text" id="regUsername" required placeholder="Pilih username unik" 
+                                    class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Password</label>
+                                    <input type="password" id="regPassword" required placeholder="••••••••" 
+                                        class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Konfirmasi Password</label>
+                                    <input type="password" id="regConfirmPassword" required placeholder="••••••••" 
+                                        class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">
+                                    Telegram ID <span class="text-rose-500">*Wajib</span>
+                                </label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center text-sky-500">
+                                        <i class="fa-brands fa-telegram text-base"></i>
+                                    </span>
+                                    <input type="text" id="regTelegram" required placeholder="@username_telegram atau ID angka" 
+                                        class="w-full pl-10 pr-4 py-2.5 rounded-xl border border-indigo-300 dark:border-indigo-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                </div>
+                                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                    <i class="fa-solid fa-circle-info text-indigo-500 mr-1"></i> Telegram ID wajib diisi sebagai pemicu (trigger) sistem otomatisasi perhitungan produktivitas harian.
+                                </p>
+                            </div>
+
+                            <button type="submit" class="w-full mt-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl shadow-lg shadow-indigo-600/20 transition-all text-sm">
+                                Daftar Sekarang
+                            </button>
+                        </form>
+
+                        <div class="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                            Sudah punya akun? <button type="button" data-action="goto-login" class="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">Masuk di sini</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderForgotView() {
+            return `
+                <div class="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-gradient-to-br from-slate-100 to-indigo-50 dark:from-slate-950 dark:to-slate-900">
+                    <div class="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200/80 dark:border-slate-700 p-8 fade-in">
+                        <div class="text-center mb-6">
+                            <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-500 text-white shadow-lg shadow-amber-500/30 mb-3 text-xl font-bold">
+                                <i class="fa-solid fa-key"></i>
+                            </div>
+                            <h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Pemulihan Password</h1>
+                            <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Masukkan Username atau Telegram ID terdaftar</p>
+                        </div>
+
+                        <form id="forgotForm" class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Username / Telegram ID</label>
+                                <input type="text" id="recoveryKey" required placeholder="cth: admin atau @telegram" 
+                                    class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            </div>
+                            <button type="submit" class="w-full py-3 px-4 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-xl shadow-lg shadow-amber-600/20 transition-all text-sm">
+                                Kirim Token Pemulihan
+                            </button>
+                        </form>
+
+                        <div class="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                            Kembali ke halaman <button type="button" data-action="goto-login" class="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">Masuk</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- STREAMING_CHUNK:Rendering Dashboard Views & Subsections ---
+        function renderDashboardView() {
+            return `
+                <div class="flex h-full overflow-hidden">
+                    <!-- Sidebar Navigation -->
+                    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col border-r border-slate-800 hidden md:flex">
+                        <div class="p-5 flex items-center space-x-3 border-b border-slate-800">
+                            <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-indigo-500/30">
+                                <i class="fa-solid fa-shield-halved"></i>
+                            </div>
+                            <div>
+                                <span class="font-bold text-white tracking-tight block">BACKOFFICE</span>
+                                <span class="text-xs text-indigo-400 font-medium">Enterprise Portal</span>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 py-6 px-4 space-y-1.5 overflow-y-auto">
+                            <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Menu Utama</p>
+                            <button data-tab="overview" class="w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${state.dashboardTab === 'overview' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30' : 'hover:bg-slate-800 text-slate-400 hover:text-white'}">
+                                <i class="fa-solid fa-chart-pie w-5 text-center"></i>
+                                <span>Overview Dashboard</span>
+                            </button>
+                            <button data-tab="users" class="w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${state.dashboardTab === 'users' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30' : 'hover:bg-slate-800 text-slate-400 hover:text-white'}">
+                                <i class="fa-solid fa-users-gear w-5 text-center"></i>
+                                <span>User Management</span>
+                            </button>
+                            <button data-tab="productivity" class="w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${state.dashboardTab === 'productivity' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30' : 'hover:bg-slate-800 text-slate-400 hover:text-white'}">
+                                <i class="fa-solid fa-bolt w-5 text-center"></i>
+                                <span>Telegram Productivity</span>
+                            </button>
+
+                            <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-6 mb-2">Sistem</p>
+                            <button data-tab="settings" class="w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${state.dashboardTab === 'settings' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30' : 'hover:bg-slate-800 text-slate-400 hover:text-white'}">
+                                <i class="fa-solid fa-sliders w-5 text-center"></i>
+                                <span>Pengaturan Portal</span>
+                            </button>
+                        </div>
+
+                        <!-- User Profile footer inside Sidebar -->
+                        <div class="p-4 border-t border-slate-800 flex items-center justify-between">
+                            <div class="flex items-center space-x-3 overflow-hidden">
+                                <div class="w-9 h-9 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-sm border border-indigo-500/30">
+                                    ${(state.currentUser?.username || 'A').charAt(0).toUpperCase()}
+                                </div>
+                                <div class="truncate">
+                                    <p class="text-sm font-medium text-white truncate">${state.currentUser?.username || 'Admin'}</p>
+                                    <p class="text-xs text-slate-400 truncate">${state.currentUser?.telegramId || '@admin'}</p>
+                                </div>
+                            </div>
+                            <button data-action="logout" title="Keluar" class="p-2 text-slate-400 hover:text-rose-400 transition-colors">
+                                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                            </button>
+                        </div>
+                    </aside>
+
+                    <!-- Main Content Area -->
+                    <div class="flex-1 flex flex-col overflow-hidden">
+                        <!-- Topbar -->
+                        <header class="h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 z-10">
+                            <div class="flex items-center space-x-4">
+                                <button id="mobileMenuToggle" class="md:hidden text-slate-500 hover:text-slate-700 dark:text-slate-400">
+                                    <i class="fa-solid fa-bars text-lg"></i>
+                                </button>
+                                <h2 class="text-lg font-bold text-slate-900 dark:text-white capitalize">
+                                    ${state.dashboardTab === 'overview' ? 'Ringkasan Statistik' : state.dashboardTab === 'users' ? 'Manajemen Pengguna & Telegram' : state.dashboardTab === 'productivity' ? 'Kalkulasi Produktivitas Telegram' : 'Pengaturan Sistem'}
+                                </h2>
+                            </div>
+
+                            <div class="flex items-center space-x-3">
+                                <button data-action="toggle-theme" class="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                                    <i class="fa-solid ${state.darkMode ? 'fa-sun text-amber-400' : 'fa-moon text-slate-600'}"></i>
+                                </button>
+                                <div class="flex items-center space-x-2 pl-3 border-l border-slate-200 dark:border-slate-700">
+                                    <div class="text-right hidden sm:block">
+                                        <div class="text-xs font-semibold text-slate-900 dark:text-white">${state.currentUser?.username || 'Administrator'}</div>
+                                        <div class="text-[10px] text-indigo-500 font-medium">Online</div>
+                                    </div>
+                                    <button data-action="logout" class="sm:hidden text-rose-500 p-2">
+                                        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </header>
+
+                        <!-- Scrollable Dashboard Content -->
+                        <main class="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-900/50">
+                            ${renderDashboardTabContent()}
+                        </main>
+                    </div>
+                </div>
+
+                <!-- Modal Dialog for Add / Edit User -->
+                ${state.showUserModal ? renderUserModal() : ''}
+            `;
+        }
+
+        function renderDashboardTabContent() {
+            if (state.dashboardTab === 'overview') {
+                const totalUsers = state.users.length;
+                const activeTelegramCount = state.users.filter(u => u.telegramId && u.telegramId.trim() !== '').length;
+                return `
+                    <div class="space-y-6 fade-in">
+                        <!-- Metric Cards -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Users</p>
+                                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">${totalUsers}</h3>
+                                    <span class="text-xs text-emerald-500 font-medium mt-1 inline-block"><i class="fa-solid fa-arrow-trend-up mr-1"></i> Terdaftar aktif</span>
+                                </div>
+                                <div class="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-xl">
+                                    <i class="fa-solid fa-users"></i>
+                                </div>
+                            </div>
+
+                            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Telegram Triggers</p>
+                                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">${activeTelegramCount}</h3>
+                                    <span class="text-xs text-sky-500 font-medium mt-1 inline-block"><i class="fa-brands fa-telegram mr-1"></i> Terhubung bot</span>
+                                </div>
+                                <div class="w-12 h-12 rounded-2xl bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400 flex items-center justify-center text-xl">
+                                    <i class="fa-solid fa-bolt"></i>
+                                </div>
+                            </div>
+
+                            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Productivity Score</p>
+                                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">94.2%</h3>
+                                    <span class="text-xs text-emerald-500 font-medium mt-1 inline-block"><i class="fa-solid fa-circle-check mr-1"></i> Performa optimal</span>
+                                </div>
+                                <div class="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl">
+                                    <i class="fa-solid fa-chart-line"></i>
+                                </div>
+                            </div>
+
+                            <div class="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Pending Tasks</p>
+                                    <h3 class="text-2xl font-bold text-slate-900 dark:text-white mt-1">7</h3>
+                                    <span class="text-xs text-amber-500 font-medium mt-1 inline-block"><i class="fa-solid fa-clock mr-1"></i> Perlu verifikasi</span>
+                                </div>
+                                <div class="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl">
+                                    <i class="fa-solid fa-list-check"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Charts / Recent Activities Grid -->
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <!-- Telegram Productivity Live Feed Simulation -->
+                            <div class="lg:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm">
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="font-bold text-slate-900 dark:text-white text-base">Aktivitas Trigger Telegram Terbaru</h3>
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+                                        <span class="w-2 h-2 rounded-full bg-indigo-600 animate-pulse mr-1.5"></span> Live Feed
+                                    </span>
+                                </div>
+                                <div class="space-y-3">
+                                    ${state.productivityLogs.map(log => `
+                                        <div class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
+                                            <div class="flex items-center space-x-3">
+                                                <div class="w-9 h-9 rounded-xl bg-sky-500/10 text-sky-500 flex items-center justify-center font-bold text-sm">
+                                                    <i class="fa-brands fa-telegram"></i>
+                                                </div>
+                                                <div>
+                                                    <p class="text-sm font-semibold text-slate-900 dark:text-white">${log.action}</p>
+                                                    <p class="text-xs text-slate-500 dark:text-slate-400">Triggered by <span class="text-indigo-500 font-medium">${log.user}</span> • ${log.time}</p>
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <span class="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
+                                                    Score: ${log.score}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Quick System Info -->
+                            <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm flex flex-col justify-between">
+                                <div>
+                                    <h3 class="font-bold text-slate-900 dark:text-white text-base mb-3">Informasi Bot Trigger</h3>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
+                                        Sistem secara otomatis mengaitkan Telegram ID terdaftar untuk menghitung produktivitas harian staf backoffice secara real-time melalui webhook bot.
+                                    </p>
+                                    <div class="p-4 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 space-y-2">
+                                        <div class="flex justify-between text-xs font-medium text-slate-600 dark:text-slate-300">
+                                            <span>Status Bot Webhook</span>
+                                            <span class="text-emerald-500 font-bold">Connected</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs font-medium text-slate-600 dark:text-slate-300">
+                                            <span>Algoritma Kalkulasi</span>
+                                            <span class="text-indigo-600 dark:text-indigo-400 font-bold">v2.1-Active</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button data-tab="productivity" class="mt-6 w-full py-2.5 px-4 bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold transition-all">
+                                    Buka Detail Produktivitas
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else if (state.dashboardTab === 'users') {
+                return `
+                    <div class="space-y-6 fade-in">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-slate-900 dark:text-white">Kelola Pengguna Backoffice</h3>
+                                <p class="text-xs text-slate-500 dark:text-slate-400">Daftar lengkap staf operasional dan Telegram ID terikat</p>
+                            </div>
+                            <button data-action="open-add-user" class="inline-flex items-center justify-center px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl shadow-md shadow-indigo-600/20 transition-all">
+                                <i class="fa-solid fa-plus mr-2"></i> Tambah Pengguna Baru
+                            </button>
+                        </div>
+
+                        <!-- Users Table Card -->
+                        <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm overflow-hidden">
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr class="bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                            <th class="py-3.5 px-6">Username</th>
+                                            <th class="py-3.5 px-6">Telegram ID (Trigger)</th>
+                                            <th class="py-3.5 px-6">Role</th>
+                                            <th class="py-3.5 px-6">Status</th>
+                                            <th class="py-3.5 px-6 text-right">Aksi</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100 dark:divide-slate-700 text-sm">
+                                        ${state.users.map(u => `
+                                            <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-700/20 transition-colors">
+                                                <td class="py-4 px-6 font-semibold text-slate-900 dark:text-white flex items-center space-x-3">
+                                                    <div class="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs">
+                                                        ${u.username.charAt(0).toUpperCase()}
+                                                    </div>
+                                                    <span>${u.username}</span>
+                                                </td>
+                                                <td class="py-4 px-6">
+                                                    <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400">
+                                                        <i class="fa-brands fa-telegram mr-1.5"></i> ${u.telegramId || 'Belum diisi'}
+                                                    </span>
+                                                </td>
+                                                <td class="py-4 px-6 text-slate-600 dark:text-slate-300 font-medium">${u.role || 'Staff'}</td>
+                                                <td class="py-4 px-6">
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${u.status === 'Active' ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}">
+                                                        ${u.status || 'Active'}
+                                                    </span>
+                                                </td>
+                                                <td class="py-4 px-6 text-right space-x-2">
+                                                    <button data-action="edit-user" data-id="${u.id}" class="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" title="Edit">
+                                                        <i class="fa-solid fa-pen-to-square"></i>
+                                                    </button>
+                                                    <button data-action="delete-user" data-id="${u.id}" class="p-2 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors" title="Hapus">
+                                                        <i class="fa-solid fa-trash-can"></i>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else if (state.dashboardTab === 'productivity') {
+                return `
+                    <div class="space-y-6 fade-in">
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm">
+                            <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-2">Simulasi Kalkulasi Produktivitas Berbasis Telegram</h3>
+                            <p class="text-sm text-slate-500 dark:text-slate-400 mb-6">
+                                Setiap staf memiliki Telegram ID unik yang memicu event task counter secara otomatis. Masukkan simulasi trigger untuk menguji kalkulasi skor kinerja.
+                            </p>
+
+                            <!-- Simulation Form -->
+                            <form id="triggerSimForm" class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Pilih Telegram ID Staf</label>
+                                    <select id="simTelegramId" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500">
+                                        ${state.users.map(u => `<option value="${u.telegramId}">${u.username} (${u.telegramId})</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Aksi / Task</label>
+                                    <input type="text" id="simAction" required placeholder="cth: Menyelesaikan Tiket #9921" class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <button type="submit" class="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl text-sm transition-all shadow-md shadow-indigo-600/20">
+                                        Kirim Trigger Bot
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Productivity Logs History -->
+                        <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm">
+                            <h4 class="font-bold text-slate-900 dark:text-white text-base mb-4">Riwayat Trigger & Kalkulasi Skor</h4>
+                            <div class="space-y-3">
+                                ${state.productivityLogs.map(log => `
+                                    <div class="p-4 rounded-xl border border-slate-100 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">
+                                                <i class="fa-solid fa-bolt"></i>
+                                            </div>
+                                            <div>
+                                                <p class="text-sm font-semibold text-slate-900 dark:text-white">${log.action}</p>
+                                                <p class="text-xs text-slate-500">Trigger Telegram: <span class="text-indigo-500 font-semibold">${log.user}</span> • Waktu: ${log.time}</p>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center space-x-4">
+                                            <div class="text-right">
+                                                <span class="text-xs text-slate-400 block">Skor Produktivitas</span>
+                                                <span class="text-sm font-bold text-emerald-600 dark:text-emerald-400">+${log.score} Pts</span>
+                                            </div>
+                                            <span class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">Valid</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                return `
+                    <div class="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm space-y-4 fade-in">
+                        <h3 class="text-lg font-bold text-slate-900 dark:text-white">Pengaturan Portal Backoffice</h3>
+                        <p class="text-sm text-slate-500 dark:text-slate-400">Konfigurasi token webhook Telegram dan preferensi sistem operasional.</p>
+                        <hr class="border-slate-100 dark:border-slate-700">
+                        <div class="space-y-4 max-w-xl">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Telegram Bot Token</label>
+                                <input type="text" value="782910293:AAHskd9201msjd9283_sample_token" readonly class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-900 text-slate-500 text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Webhook URL Endpoint</label>
+                                <input type="text" value="https://api.backoffice-enterprise.internal/v1/telegram/webhook" readonly class="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-900 text-slate-500 text-sm">
+                            </div>
+                            <button type="button" onclick="alertCustom('Pengaturan berhasil disimpan!')" class="py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl text-sm transition-all shadow-md">
+                                Simpan Perubahan
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // --- STREAMING_CHUNK:User Modal Dialog Component ---
+        function renderUserModal() {
+            const isEdit = state.modalMode === 'edit';
+            const user = state.selectedUser || { username: '', telegramId: '', role: 'Support Agent', status: 'Active' };
+            return `
+                <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm fade-in">
+                    <div class="w-full max-w-md bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-bold text-slate-900 dark:text-white">${isEdit ? 'Edit Pengguna' : 'Tambah Pengguna Baru'}</h3>
+                            <button data-action="close-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                                <i class="fa-solid fa-xmark text-lg"></i>
+                            </button>
+                        </div>
+
+                        <form id="userModalForm" class="space-y-4">
+                            <input type="hidden" id="modalUserId" value="${user.id || ''}">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Username</label>
+                                <input type="text" id="modalUsername" required value="${user.username || ''}" placeholder="Username" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm text-slate-900 dark:text-white">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Telegram ID (Wajib untuk Trigger)</label>
+                                <input type="text" id="modalTelegram" required value="${user.telegramId || ''}" placeholder="@telegram_id" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm text-slate-900 dark:text-white">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Role</label>
+                                <select id="modalRole" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm text-slate-900 dark:text-white">
+                                    <option value="Super Admin" ${user.role === 'Super Admin' ? 'selected' : ''}>Super Admin</option>
+                                    <option value="Support Agent" ${user.role === 'Support Agent' ? 'selected' : ''}>Support Agent</option>
+                                    <option value="Operations" ${user.role === 'Operations' ? 'selected' : ''}>Operations</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">Status</label>
+                                <select id="modalStatus" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-sm text-slate-900 dark:text-white">
+                                    <option value="Active" ${user.status === 'Active' ? 'selected' : ''}>Active</option>
+                                    <option value="Inactive" ${user.status === 'Inactive' ? 'selected' : ''}>Inactive</option>
+                                </select>
+                            </div>
+
+                            <div class="flex justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-700">
+                                <button type="button" data-action="close-modal" class="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Batal</button>
+                                <button type="submit" class="px-5 py-2.5 rounded-xl text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/20">Simpan</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Custom Modal Alert replacement for alert()
+        function alertCustom(msg) {
+            showNotification(msg, 'success');
+        }
+
+        // --- STREAMING_CHUNK:Event Listeners & Form Handlers ---
+        function attachEventListeners() {
+            // Global data-action bindings
+            document.querySelectorAll('[data-action]').forEach(el => {
+                el.onclick = (e) => {
+                    const action = el.getAttribute('data-action');
+                    if (action === 'goto-register') { state.view = 'register'; render(); }
+                    else if (action === 'goto-login') { state.view = 'login'; render(); }
+                    else if (action === 'goto-forgot') { state.view = 'forgot'; render(); }
+                    else if (action === 'logout') {
+                        state.currentUser = null;
+                        localStorage.removeItem(STORAGE_KEY_SESSION);
+                        state.view = 'login';
+                        showNotification('Berhasil keluar dari sesi.', 'success');
+                        render();
+                    }
+                    else if (action === 'toggle-theme') {
+                        state.darkMode = !state.darkMode;
+                        if (state.darkMode) {
+                            document.documentElement.classList.add('dark');
+                        } else {
+                            document.documentElement.classList.remove('dark');
+                        }
+                        render();
+                    }
+                    else if (action === 'open-add-user') {
+                        state.modalMode = 'add';
+                        state.selectedUser = null;
+                        state.showUserModal = true;
+                        render();
+                    }
+                    else if (action === 'close-modal') {
+                        state.showUserModal = false;
+                        render();
+                    }
+                };
+            });
+
+            // Sidebar tab switching
+            document.querySelectorAll('[data-tab]').forEach(el => {
+                el.onclick = () => {
+                    state.dashboardTab = el.getAttribute('data-tab');
+                    render();
+                };
+            });
+
+            // User table actions (edit/delete)
+            document.querySelectorAll('[data-action="edit-user"]').forEach(btn => {
+                btn.onclick = () => {
+                    const id = btn.getAttribute('data-id');
+                    const user = state.users.find(u => u.id === id);
+                    if (user) {
+                        state.modalMode = 'edit';
+                        state.selectedUser = user;
+                        state.showUserModal = true;
+                        render();
+                    }
+                };
+            });
+
+            document.querySelectorAll('[data-action="delete-user"]').forEach(btn => {
+                btn.onclick = () => {
+                    const id = btn.getAttribute('data-id');
+                    state.users = state.users.filter(u => u.id !== id);
+                    saveUsers();
+                    showNotification('Pengguna berhasil dihapus.', 'success');
+                    render();
+                };
+            });
+
+            // Login Form Submit
+            const loginForm = document.getElementById('loginForm');
+            if (loginForm) {
+                loginForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const username = document.getElementById('loginUsername').value.trim();
+                    const password = document.getElementById('loginPassword').value;
+
+                    const found = state.users.find(u => u.username === username && u.password === password);
+                    if (found || (username === 'admin' && password === 'password123')) {
+                        const sessionUser = found || { username: 'admin', telegramId: '@admin_backoffice', role: 'Super Admin' };
+                        state.currentUser = sessionUser;
+                        localStorage.setItem(STORAGE_KEY_SESSION, JSON.stringify(sessionUser));
+                        state.view = 'dashboard';
+                        showNotification('Login berhasil! Selamat datang di Backoffice Portal.', 'success');
+                        render();
+                    } else {
+                        showNotification('Username atau password salah!', 'error');
+                    }
+                };
+            }
+
+            // Register Form Submit
+            const registerForm = document.getElementById('registerForm');
+            if (registerForm) {
+                registerForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const username = document.getElementById('regUsername').value.trim();
+                    const password = document.getElementById('regPassword').value;
+                    const confirmPassword = document.getElementById('regConfirmPassword').value;
+                    const telegram = document.getElementById('regTelegram').value.trim();
+
+                    if (!telegram) {
+                        showNotification('Telegram ID wajib diisi sebagai pemicu produktivitas!', 'error');
+                        return;
+                    }
+                    if (password !== confirmPassword) {
+                        showNotification('Konfirmasi password tidak cocok!', 'error');
+                        return;
+                    }
+                    if (state.users.some(u => u.username === username)) {
+                        showNotification('Username sudah terdaftar!', 'error');
+                        return;
+                    }
+
+                    const newUser = {
+                        id: Date.now().toString(),
+                        username,
+                        password,
+                        telegramId: telegram,
+                        role: 'Support Agent',
+                        status: 'Active',
+                        createdAt: new Date().toISOString().split('T')[0]
+                    };
+
+                    state.users.push(newUser);
+                    saveUsers();
+                    showNotification('Registrasi berhasil! Silakan masuk.', 'success');
+                    state.view = 'login';
+                    render();
+                };
+            }
+
+            // Forgot Password Form Submit
+            const forgotForm = document.getElementById('forgotForm');
+            if (forgotForm) {
+                forgotForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const key = document.getElementById('recoveryKey').value.trim();
+                    const user = state.users.find(u => u.username === key || u.telegramId === key);
+                    if (user || key === 'admin') {
+                        showNotification('Token pemulihan telah dikirim ke Telegram ID terkait.', 'success');
+                        state.view = 'login';
+                        render();
+                    } else {
+                        showNotification('Username atau Telegram ID tidak ditemukan dalam sistem.', 'error');
+                    }
+                };
+            }
+
+            // User Modal Form Submit (Add/Edit)
+            const userModalForm = document.getElementById('userModalForm');
+            if (userModalForm) {
+                userModalForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const id = document.getElementById('modalUserId').value;
+                    const username = document.getElementById('modalUsername').value.trim();
+                    const telegramId = document.getElementById('modalTelegram').value.trim();
+                    const role = document.getElementById('modalRole').value;
+                    const status = document.getElementById('modalStatus').value;
+
+                    if (!telegramId) {
+                        showNotification('Telegram ID wajib diisi!', 'error');
+                        return;
+                    }
+
+                    if (state.modalMode === 'edit' && id) {
+                        const idx = state.users.findIndex(u => u.id === id);
+                        if (idx !== -1) {
+                            state.users[idx] = { ...state.users[idx], username, telegramId, role, status };
+                        }
+                    } else {
+                        const newUser = {
+                            id: Date.now().toString(),
+                            username,
+                            password: 'password123',
+                            telegramId,
+                            role,
+                            status,
+                            createdAt: new Date().toISOString().split('T')[0]
+                        };
+                        state.users.push(newUser);
+                    }
+
+                    saveUsers();
+                    state.showUserModal = false;
+                    showNotification('Data pengguna berhasil disimpan.', 'success');
+                    render();
+                };
+            }
+
+            // Productivity Trigger Simulation Form
+            const triggerSimForm = document.getElementById('triggerSimForm');
+            if (triggerSimForm) {
+                triggerSimForm.onsubmit = (e) => {
+                    e.preventDefault();
+                    const telegramId = document.getElementById('simTelegramId').value;
+                    const action = document.getElementById('simAction').value.trim();
+
+                    const newLog = {
+                        id: Date.now(),
+                        user: telegramId,
+                        action,
+                        score: Math.floor(Math.random() * 20) + 85,
+                        time: 'Baru saja'
+                    };
+
+                    state.productivityLogs.unshift(newLog);
+                    saveLogs();
+                    showNotification(`Trigger Telegram dari ${telegramId} berhasil diproses untuk kalkulasi produktivitas!`, 'success');
+                    render();
+                };
+            }
+        }
+
+        // Initialize on load
+        window.onload = () => {
+            initStorage();
+            render();
+        };
+    </script>
+</body>
+</html>
